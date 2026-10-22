@@ -1,0 +1,42 @@
+<script>
+async function demoPayment() {
+  const amount = Number(document.getElementById('amount').value);
+  const result = document.getElementById('result');
+
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 500000) {
+    result.style.background = '#ffebee';
+    result.textContent = '১ থেকে ৫,০০,০০০ টাকার মধ্যে পরিমাণ লিখুন।';
+    return;
+  }
+
+  result.style.background = '#fff3cd';
+  result.textContent = 'bKash Sandbox-এর সঙ্গে সংযোগ করা হচ্ছে...';
+
+  try {
+    const response = await fetch('/api/bkash/create-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: amount.toFixed(2),
+        payerReference: 'RUBEL-Enterprise'
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'পেমেন্ট তৈরি করা যায়নি।');
+    }
+
+    if (data.bkashURL) {
+      window.location.href = data.bkashURL;
+      return;
+    }
+
+    throw new Error('bKash-এর পেমেন্ট লিংক পাওয়া যায়নি।');
+  } catch (error) {
+    result.style.background = '#ffebee';
+    result.textContent = 'সংযোগ ব্যর্থ: ' + error.message;
+  }
+}
+</script>

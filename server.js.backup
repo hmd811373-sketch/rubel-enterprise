@@ -1,0 +1,115 @@
+require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const path = require('path');
+
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+const { BKASH_BASE_URL, BKASH_APP_KEY, BKASH_APP_SECRET, BKASH_USERNAME, BKASH_PASSWORD, PORT } = process.env;
+
+// মেমোরিতে অর্ডার ও ট্রানজেকশন স্ট্যাটাস ট্র্যাক করার জন্য (ডাবল পেমেন্ট রোধ করতে)
+const orders = new Map();
+
+// bKash Grant Token পাওয়ার ফাংশন
+async function getBkashToken(req, res, next) {
+    try {
+        const response = await axios.post(`${BKASH_BASE_URL}/tokenized/checkout/token/grant`, {
+            app_key: BKASH_APP_KEY,
+            app_secret: BKASH_APP_SECRET
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'username': BKASH_USERNAME,
+                'password': BKASH_PASSWORD
+            }
+        });
+        req.bkashToken = response.data.id_token;
+        next();
+    } catch (error) {
+        console.error('Token Error:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Failed to authenticate with bKash' });
+    }
+}
+
+// ১. Create Payment API
+app.post('/api/bkash/create-payment', getBkashToken, async (req, res) => {
+    const { amount, payerReference } = req.body;
+    const merchantInvoiceNumber = 'INV_' + Date.now();
+
+    // ডাবল পেমেন্ট বা একই অর্ডারে একাধিকবার পেমেন্ট রোধ করা
+    orders.set(merchantInvoiceNumber, { amount, status: 'PENDING', payerReference });
+
+    try {
+        const response = await axios.post(`${BKASH_BASE_URL}/tokenized/checkout/create`, {
+            mode: '0011',
+            payerReference: payerReference || 'RUBEL-Enterprise',
+            callbackURL: `http://localhost:${PORT}/api/bkash/callback`,
+            merchantAssociationInfo: 'MI01ABC',
+            amount: amount,
+            currency: 'BDT',
+            intent: 'sale',
+            merchantInvoiceNumber: merchantInvoiceNumber
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': req.bkashToken,
+                'X-APP-Key': BKASH_APP_KEY
+            }
+        });
+
+        res.json(response.data);
+    } catch (error) {
+        console.error('Create Payment Error:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Failed to create bKash payment' });
+    }
+});
+
+// ২. bKash Callback & Execute Payment API
+app.get('/api/bkash/callback', getBkashToken, async (req, res) => {
+    const { paymentID, status } = req.query;
+
+    if (status !== 'success') {
+        return res.redirect(`/index.html?payment=failed&message=${status}`);
+    }
+
+    try {
+        const response = await axios.post(`${BKASH_BASE_URL}/tokenized/checkout/execute`, {
+            paymentID: paymentID
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': req.bkashToken,
+                'X-APP-Key': BKASH_APP_KEY
+            }
+        });
+
+        const data = response.data;
+        if (data && data.statusCode === '0000') {
+            const invoice = data.merchantInvoiceNumber;
+            const order = orders.get(invoice);
+
+            // সার্ভার থেকে নিশ্চিত হওয়া যে পেমেন্ট সফল হয়েছে এবং পূর্বে প্রসেস হয়নি
+            if (order && order.status === 'PENDING') {
+                order.status = 'COMPLETED';
+                order.trxID = data.trxID;
+                orders.set(invoice, order);
+            }
+
+            return res.redirect(`/index.html?payment=success&trxID=${data.trxID}&amount=${data.amount}`);
+        } else {
+            return res.redirect(`/index.html?payment=failed&message=${data.statusMessage || 'Execution Failed'}`);
+        }
+    } catch (error) {
+        console.error('Execute Payment Error:', error.response?.data || error.message);
+        res.redirect('/index.html?payment=error');
+    }
+});
+
+app.listen(PORT, () => {
+    console.log(`RUBEL Enterprise Server running on http://127.0.0.1:${PORT}`);
+});

@@ -1,0 +1,254 @@
+
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RUBEL Enterprise - bKash Payment</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: sans-serif;
+        }
+
+        body {
+            background: #f5f6fa;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 16px;
+        }
+
+        .container {
+            background: #fff;
+            width: 100%;
+            max-width: 400px;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .header h2 {
+            color: #e2136e;
+            font-size: 22px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 15px;
+        }
+
+        .pay-btn {
+            background: #e2136e;
+            color: #fff;
+            border: none;
+            width: 100%;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .pay-btn:disabled {
+            opacity: 0.6;
+        }
+
+        .alert {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            text-align: center;
+            display: none;
+            overflow-wrap: anywhere;
+        }
+
+        .alert-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .alert-error {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .notice {
+            color: #666;
+            font-size: 12px;
+            text-align: center;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h2>RUBEL Enterprise</h2>
+        <p>bKash পেমেন্ট</p>
+    </div>
+
+    <div id="alertBox" class="alert" role="status"></div>
+
+    <div class="form-group">
+        <label for="amount">টাকার পরিমাণ (BDT)</label>
+        <input
+            type="number"
+            id="amount"
+            min="1"
+            max="100000"
+            step="0.01"
+            placeholder="যেমন: ১০০"
+            value="100">
+    </div>
+
+    <div class="form-group">
+        <label for="reference">রেফারেন্স (ঐচ্ছিক)</label>
+        <input
+            type="text"
+            id="reference"
+            maxlength="50"
+            placeholder="ইনভয়েস বা নাম"
+            value="Order-101">
+    </div>
+
+    <button
+        id="payButton"
+        class="pay-btn"
+        onclick="initiatePayment()">
+        bKash দিয়ে পেমেন্ট করুন
+    </button>
+
+    <p class="notice">
+        পেমেন্টের অবস্থা সার্ভার থেকে যাচাই করা প্রয়োজন।
+    </p>
+</div>
+
+<script>
+    function showAlert(message, type) {
+        const box = document.getElementById('alertBox');
+
+        box.textContent = message;
+        box.className = 'alert ' +
+            (type === 'success' ? 'alert-success' : 'alert-error');
+        box.style.display = 'block';
+    }
+
+    window.addEventListener('DOMContentLoaded', function () {
+        const params = new URLSearchParams(window.location.search);
+        const status = params.get('payment');
+
+        if (status === 'success') {
+            // URL-এর success প্যারামিটার একা পেমেন্টের প্রমাণ নয়।
+            showAlert(
+                'পেমেন্টের ফলাফল সার্ভার থেকে যাচাই করুন।',
+                'success'
+            );
+        } else if (status === 'failed' || status === 'error') {
+            showAlert(
+                'পেমেন্ট সম্পন্ন হয়নি অথবা যাচাই করা যায়নি।',
+                'error'
+            );
+        }
+    });
+
+    async function initiatePayment() {
+        const button = document.getElementById('payButton');
+        const amount = Number(
+            document.getElementById('amount').value
+        );
+        const payerReference =
+            document.getElementById('reference').value.trim();
+
+        if (!Number.isFinite(amount) ||
+            amount < 1 ||
+            amount > 100000) {
+            showAlert('সঠিক টাকার পরিমাণ লিখুন।', 'error');
+            return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'অপেক্ষা করুন...';
+
+        try {
+            const response = await fetch(
+                '/api/bkash/create-payment',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        amount: amount.toFixed(2),
+                        payerReference: payerReference
+                    })
+                }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error || 'পেমেন্ট শুরু করা যায়নি।'
+                );
+            }
+
+            if (data && data.bkashURL) {
+                window.location.assign(data.bkashURL);
+                return;
+            }
+
+            showAlert(
+                data.error ||
+                'বৈধ bKash Checkout URL পাওয়া যায়নি।',
+                'error'
+            );
+
+        } catch (error) {
+            showAlert(
+                error.message ||
+                'সার্ভারের সঙ্গে সংযোগ করা যায়নি।',
+                'error'
+            );
+        } finally {
+            button.disabled = false;
+            button.textContent = 'bKash দিয়ে পেমেন্ট করুন';
+        }
+    }
+</script>
+
+</body>
+</html>
+
